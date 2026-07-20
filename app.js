@@ -38,15 +38,15 @@ const askerQuestionCount = document.getElementById("askerQuestionCount");
 const answererQuestionList = document.getElementById("answererQuestionList");
 const answererQuestionCount = document.getElementById("answererQuestionCount");
 
-const CLOUD_API_URL = "https://api.restful-api.dev/objects/ff8081819f7e10ae019f80ab711704a7";
+const CLOUD_API_URL = "https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb";
 
 // Initialize Application
 function initApp() {
   loadQuestionsFromStorage();
   setupEventListeners();
   fetchFromCloud();
-  // Poll cloud for real-time updates across devices every 3 seconds
-  setInterval(fetchFromCloud, 3000);
+  // Poll cloud for real-time updates across devices every 2 seconds
+  setInterval(fetchFromCloud, 2000);
 }
 
 // Storage & Cloud Operations
@@ -75,12 +75,17 @@ function saveQuestionsToStorage() {
 
 async function fetchFromCloud() {
   try {
-    const res = await fetch(CLOUD_API_URL);
+    // Add cache-busting timestamp to prevent browser cache issues across devices
+    const cacheBusterUrl = `${CLOUD_API_URL}?_t=${Date.now()}`;
+    const res = await fetch(cacheBusterUrl, {
+      cache: "no-store",
+      headers: { "Pragma": "no-cache" }
+    });
     if (!res.ok) return;
     const json = await res.json();
-    if (json && json.data && Array.isArray(json.data.questions)) {
-      const cloudQuestions = json.data.questions;
-      // Compare and update if cloud data has changed
+    if (json && Array.isArray(json.questions)) {
+      const cloudQuestions = json.questions;
+      // Compare and update if cloud data differs
       if (JSON.stringify(cloudQuestions) !== JSON.stringify(state.questions)) {
         state.questions = cloudQuestions;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state.questions));
@@ -90,7 +95,7 @@ async function fetchFromCloud() {
       }
     }
   } catch (err) {
-    // Silent fail if offline
+    // Silent fail if network issue
   }
 }
 
@@ -98,11 +103,11 @@ async function syncToCloud() {
   try {
     await fetch(CLOUD_API_URL, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "kaash_questions",
-        data: { questions: state.questions }
-      })
+      headers: { 
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache"
+      },
+      body: JSON.stringify({ questions: state.questions })
     });
   } catch (err) {
     console.error("Cloud sync error:", err);
@@ -192,7 +197,7 @@ function handleBack() {
   nameError.style.display = "none";
   questionInput.value = "";
   questionError.style.display = "none";
-  yesNoToggle.checked = true;
+  yesNoToggle.checked = false;
 
   // Reset role to default ask
   state.currentRole = "ask";
@@ -234,6 +239,7 @@ function handleAddQuestion() {
   // Clear input & reset form error
   questionInput.value = "";
   questionError.style.display = "none";
+  yesNoToggle.checked = false;
 
   // Re-render
   renderAskerPanel();
