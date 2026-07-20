@@ -668,6 +668,7 @@ input:checked + .slider:before {
   font-weight: 700;
   color: var(--text-muted);
   cursor: pointer;
+  white-space: nowrap;
   transition: var(--transition);
 }
 
