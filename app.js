@@ -40,6 +40,14 @@ const askerQuestionCount = document.getElementById("askerQuestionCount");
 const answererQuestionList = document.getElementById("answererQuestionList");
 const answererQuestionCount = document.getElementById("answererQuestionCount");
 
+const syncStatusBadge = document.getElementById("syncStatusBadge");
+const syncText = document.getElementById("syncText");
+const syncDot = document.querySelector(".sync-dot");
+const cloudModal = document.getElementById("cloudModal");
+const closeModalBtn = document.getElementById("closeModalBtn");
+const refreshCloudBtn = document.getElementById("refreshCloudBtn");
+const cloudJsonContent = document.getElementById("cloudJsonContent");
+
 // Initialize Application
 function initApp() {
   loadQuestionsFromStorage();
@@ -111,7 +119,20 @@ function mergeQuestions(localList, cloudList) {
   return Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
+function setSyncState(isSyncing, label = "Synced") {
+  if (syncDot && syncText) {
+    if (isSyncing) {
+      syncDot.classList.add("syncing");
+      syncText.textContent = "Syncing...";
+    } else {
+      syncDot.classList.remove("syncing");
+      syncText.textContent = label;
+    }
+  }
+}
+
 async function fetchFromCloud() {
+  setSyncState(true);
   try {
     // Add cache-busting timestamp to prevent browser cache issues across devices
     const cacheBusterUrl = `${CLOUD_API_URL}?_t=${Date.now()}`;
@@ -119,10 +140,17 @@ async function fetchFromCloud() {
       cache: "no-store",
       headers: { "Pragma": "no-cache" }
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      setSyncState(false, "Offline");
+      return;
+    }
 
     const json = await res.json();
     if (json && Array.isArray(json.questions)) {
+      if (cloudModal && cloudModal.style.display !== "none") {
+        cloudJsonContent.textContent = JSON.stringify(json, null, 2);
+      }
+
       const merged = mergeQuestions(state.questions, json.questions);
       
       if (JSON.stringify(merged) !== JSON.stringify(state.questions)) {
@@ -133,12 +161,14 @@ async function fetchFromCloud() {
         }
       }
     }
+    setSyncState(false, "Synced");
   } catch (err) {
-    // Silent fail if network issue
+    setSyncState(false, "Offline");
   }
 }
 
 async function syncToCloud() {
+  setSyncState(true);
   try {
     await fetch(CLOUD_API_URL, {
       method: "PUT",
@@ -148,8 +178,13 @@ async function syncToCloud() {
       },
       body: JSON.stringify({ questions: state.questions })
     });
+    setSyncState(false, "Synced");
+    if (cloudModal && cloudModal.style.display !== "none") {
+      cloudJsonContent.textContent = JSON.stringify({ questions: state.questions }, null, 2);
+    }
   } catch (err) {
     console.error("Cloud sync error:", err);
+    setSyncState(false, "Offline");
   }
 }
 
@@ -198,6 +233,35 @@ function setupEventListeners() {
       renderCurrentPanel();
     }
   });
+
+  // Cloud Modal Inspectors Event Listeners
+  if (syncStatusBadge) {
+    syncStatusBadge.addEventListener("click", () => {
+      cloudModal.style.display = "flex";
+      fetchFromCloud();
+    });
+  }
+
+  if (closeModalBtn) {
+    closeModalBtn.addEventListener("click", () => {
+      cloudModal.style.display = "none";
+    });
+  }
+
+  if (refreshCloudBtn) {
+    refreshCloudBtn.addEventListener("click", () => {
+      cloudJsonContent.textContent = "Fetching latest cloud state...";
+      fetchFromCloud();
+    });
+  }
+
+  if (cloudModal) {
+    cloudModal.addEventListener("click", (e) => {
+      if (e.target === cloudModal) {
+        cloudModal.style.display = "none";
+      }
+    });
+  }
 }
 
 // Handle Welcome -> Board View transition

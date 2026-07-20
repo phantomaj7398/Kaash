@@ -80,15 +80,44 @@
             <h2 id="welcomeHeading" class="welcome-heading">Welcome!</h2>
             <p id="roleHint" class="role-hint"></p>
           </div>
-          <button id="backBtn" class="btn-back" title="Return to Welcome Screen">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="19" y1="12" x2="5" y2="12"></line>
-              <polyline points="12 19 5 12 12 5"></polyline>
-            </svg>
-            <span>Back</span>
-          </button>
+          <div class="header-actions">
+            <button id="syncStatusBadge" class="sync-badge" title="Click to view live cloud database JSON">
+              <span class="sync-dot"></span>
+              <span id="syncText">Synced</span>
+            </button>
+            <button id="backBtn" class="btn-back" title="Return to Welcome Screen">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+              </svg>
+              <span>Back</span>
+            </button>
+          </div>
         </div>
       </header>
+
+      <!-- CLOUD INSPECTOR MODAL -->
+      <div id="cloudModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3>Live Cloud Database Inspector</h3>
+            <button id="closeModalBtn" class="close-btn">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="modal-desc">This is the exact real-time JSON data stored on the cloud server:</p>
+            <div class="cloud-url-box">
+              <span class="url-label">Cloud Endpoint URL:</span>
+              <a href="https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb" target="_blank" class="url-link">
+                https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb
+              </a>
+            </div>
+            <pre id="cloudJsonContent" class="json-viewer">Loading live cloud data...</pre>
+          </div>
+          <div class="modal-footer">
+            <button id="refreshCloudBtn" class="btn btn-primary">Refresh Cloud Data</button>
+          </div>
+        </div>
+      </div>
 
       <!-- ASK MODE PANEL -->
       <div id="askPanel" class="panel-section" style="display: none;">
