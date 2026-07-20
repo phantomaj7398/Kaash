@@ -1,11 +1,14 @@
 /**
  * Question Board App - Plain JS Single Page App
  * LocalStorage key: "kaash-question-board"
- * Real-time Cross-Device Cloud Sync
+ * Firebase Realtime Database Multi-Device Synchronization
  */
 
 const STORAGE_KEY = "kaash-question-board";
-const CLOUD_API_URL = "https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb";
+const FIREBASE_URL_KEY = "kaash-firebase-db-url";
+
+// Default Firebase Realtime Database URL
+let DEFAULT_FIREBASE_URL = "https://kaash-question-board-default-rtdb.firebaseio.com";
 
 // Global App State
 let state = {
@@ -13,6 +16,10 @@ let state = {
   currentRole: "ask", // 'ask' | 'answer'
   questions: []
 };
+
+// Firebase Instance
+let firebaseApp = null;
+let firebaseDb = null;
 
 // DOM Elements
 const welcomeScreen = document.getElementById("welcomeScreen");
@@ -45,16 +52,15 @@ const syncText = document.getElementById("syncText");
 const syncDot = document.querySelector(".sync-dot");
 const cloudModal = document.getElementById("cloudModal");
 const closeModalBtn = document.getElementById("closeModalBtn");
-const refreshCloudBtn = document.getElementById("refreshCloudBtn");
+const saveFirebaseBtn = document.getElementById("saveFirebaseBtn");
+const firebaseUrlInput = document.getElementById("firebaseUrlInput");
 const cloudJsonContent = document.getElementById("cloudJsonContent");
 
 // Initialize Application
 function initApp() {
   loadQuestionsFromStorage();
   setupEventListeners();
-  fetchFromCloud();
-  // Poll cloud for real-time updates across devices every 2 seconds
-  setInterval(fetchFromCloud, 2000);
+  initFirebase();
 }
 
 // Storage Operations
@@ -80,50 +86,11 @@ function saveQuestionsToStorage() {
   }
 }
 
-// Deterministic Merging Algorithm (Cross-Device CRDT)
-function mergeQuestions(localList, cloudList) {
-  const map = new Map();
-
-  // Load local questions
-  (localList || []).forEach(q => {
-    if (q && q.id) {
-      map.set(q.id, q);
-    }
-  });
-
-  // Merge cloud questions
-  (cloudList || []).forEach(cq => {
-    if (!cq || !cq.id) return;
-    const lq = map.get(cq.id);
-    if (!lq) {
-      map.set(cq.id, cq);
-    } else {
-      const cloudTime = cq.updatedAt || cq.createdAt || 0;
-      const localTime = lq.updatedAt || lq.createdAt || 0;
-
-      if (cloudTime > localTime) {
-        map.set(cq.id, cq);
-      } else if (cloudTime === localTime) {
-        if (cq.deleted) {
-          map.set(cq.id, cq);
-        } else if (cq.answerSignal && !lq.answerSignal) {
-          map.set(cq.id, cq);
-        } else if (cq.answerText && !lq.answerText) {
-          map.set(cq.id, cq);
-        }
-      }
-    }
-  });
-
-  // Sort by createdAt descending
-  return Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-}
-
-function setSyncState(isSyncing, label = "Synced") {
+function setSyncState(isSyncing, label = "Firebase Live") {
   if (syncDot && syncText) {
     if (isSyncing) {
       syncDot.classList.add("syncing");
-      syncText.textContent = "Syncing...";
+      syncText.textContent = "Connecting...";
     } else {
       syncDot.classList.remove("syncing");
       syncText.textContent = label;
@@ -131,66 +98,67 @@ function setSyncState(isSyncing, label = "Synced") {
   }
 }
 
-async function fetchFromCloud() {
+// Initialize Firebase Realtime Database
+function initFirebase() {
+  const customUrl = localStorage.getItem(FIREBASE_URL_KEY) || DEFAULT_FIREBASE_URL;
+  if (firebaseUrlInput) {
+    firebaseUrlInput.value = customUrl;
+  }
+
   setSyncState(true);
+
   try {
-    // Add cache-busting timestamp to prevent browser cache issues across devices
-    const cacheBusterUrl = `${CLOUD_API_URL}?_t=${Date.now()}`;
-    const res = await fetch(cacheBusterUrl, {
-      cache: "no-store",
-      headers: { "Pragma": "no-cache" }
-    });
-    if (!res.ok) {
-      setSyncState(false, "Offline");
-      return;
-    }
-
-    const json = await res.json();
-    if (json && Array.isArray(json.questions)) {
-      if (cloudModal && cloudModal.style.display !== "none") {
-        cloudJsonContent.textContent = JSON.stringify(json, null, 2);
+    if (typeof firebase !== "undefined" && firebase.initializeApp) {
+      // Re-initialize if already initialized
+      if (!firebase.apps.length) {
+        firebaseApp = firebase.initializeApp({ databaseURL: customUrl });
+      } else {
+        firebaseApp = firebase.app();
       }
+      firebaseDb = firebase.database(firebaseApp);
 
-      const merged = mergeQuestions(state.questions, json.questions);
-      
-      if (JSON.stringify(merged) !== JSON.stringify(state.questions)) {
-        state.questions = merged;
-        saveQuestionsToStorage();
-        if (state.currentUser) {
-          renderCurrentPanel();
+      // Listen for real-time WebSocket updates across all devices
+      firebaseDb.ref("questions").on("value", (snapshot) => {
+        const val = snapshot.val();
+        setSyncState(false, "Firebase Live");
+
+        if (val) {
+          const cloudQuestions = Object.values(val);
+          state.questions = cloudQuestions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          saveQuestionsToStorage();
+
+          if (cloudModal && cloudModal.style.display !== "none") {
+            cloudJsonContent.textContent = JSON.stringify({ questions: state.questions }, null, 2);
+          }
+
+          if (state.currentUser) {
+            renderCurrentPanel();
+          }
         }
-      }
+      }, (error) => {
+        console.warn("Firebase listener error:", error);
+        setSyncState(false, "Offline");
+      });
+    } else {
+      setSyncState(false, "Local Mode");
     }
-    setSyncState(false, "Synced");
   } catch (err) {
+    console.error("Firebase init failed:", err);
     setSyncState(false, "Offline");
   }
 }
 
-async function syncToCloud() {
-  setSyncState(true);
-  try {
-    await fetch(CLOUD_API_URL, {
-      method: "PUT",
-      headers: { 
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache"
-      },
-      body: JSON.stringify({ questions: state.questions })
+// Push item modification to Firebase Realtime DB
+function pushToFirebase(questionObj) {
+  if (firebaseDb && questionObj && questionObj.id) {
+    firebaseDb.ref("questions/" + questionObj.id).set(questionObj).catch(err => {
+      console.error("Firebase write error:", err);
     });
-    setSyncState(false, "Synced");
-    if (cloudModal && cloudModal.style.display !== "none") {
-      cloudJsonContent.textContent = JSON.stringify({ questions: state.questions }, null, 2);
-    }
-  } catch (err) {
-    console.error("Cloud sync error:", err);
-    setSyncState(false, "Offline");
   }
 }
 
 // Setup Event Listeners
 function setupEventListeners() {
-  // Role selection buttons on welcome screen
   roleBtns.forEach(btn => {
     btn.addEventListener("click", () => {
       roleBtns.forEach(b => b.classList.remove("active"));
@@ -199,20 +167,16 @@ function setupEventListeners() {
     });
   });
 
-  // Name input clear error on typing
   userNameInput.addEventListener("input", () => {
     nameError.style.display = "none";
   });
 
-  // Question input clear error on typing
   questionInput.addEventListener("input", () => {
     questionError.style.display = "none";
   });
 
-  // Continue button click
   continueBtn.addEventListener("click", handleContinue);
 
-  // Allow pressing Enter in name input to continue
   userNameInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -220,13 +184,9 @@ function setupEventListeners() {
     }
   });
 
-  // Back button click
   backBtn.addEventListener("click", handleBack);
-
-  // Add question button click
   addQuestionBtn.addEventListener("click", handleAddQuestion);
 
-  // Sync across tabs/windows via storage event
   window.addEventListener("storage", (e) => {
     if (e.key === STORAGE_KEY) {
       loadQuestionsFromStorage();
@@ -234,11 +194,11 @@ function setupEventListeners() {
     }
   });
 
-  // Cloud Modal Inspectors Event Listeners
+  // Modal Event Listeners
   if (syncStatusBadge) {
     syncStatusBadge.addEventListener("click", () => {
       cloudModal.style.display = "flex";
-      fetchFromCloud();
+      cloudJsonContent.textContent = JSON.stringify({ questions: state.questions }, null, 2);
     });
   }
 
@@ -248,10 +208,15 @@ function setupEventListeners() {
     });
   }
 
-  if (refreshCloudBtn) {
-    refreshCloudBtn.addEventListener("click", () => {
-      cloudJsonContent.textContent = "Fetching latest cloud state...";
-      fetchFromCloud();
+  if (saveFirebaseBtn) {
+    saveFirebaseBtn.addEventListener("click", () => {
+      const newUrl = firebaseUrlInput.value.trim();
+      if (newUrl) {
+        localStorage.setItem(FIREBASE_URL_KEY, newUrl);
+        DEFAULT_FIREBASE_URL = newUrl;
+        initFirebase();
+        cloudModal.style.display = "none";
+      }
     });
   }
 
@@ -276,11 +241,9 @@ function handleContinue() {
   state.currentUser = nameVal;
   nameError.style.display = "none";
 
-  // Hide welcome, show board
   welcomeScreen.style.display = "none";
   boardView.style.display = "block";
 
-  // Set header info
   welcomeHeading.textContent = `Welcome, ${state.currentUser}!`;
   if (state.currentRole === "ask") {
     roleHint.textContent = "Asking Mode • Ask questions for answers";
@@ -288,13 +251,11 @@ function handleContinue() {
     roleHint.textContent = "Answering Mode • Provide answers to questions";
   }
 
-  // Render view
   renderCurrentPanel();
 }
 
 // Handle Back Button -> Welcome Screen
 function handleBack() {
-  // Reset user & form state
   state.currentUser = "";
   userNameInput.value = "";
   nameError.style.display = "none";
@@ -302,7 +263,6 @@ function handleBack() {
   questionError.style.display = "none";
   yesNoToggle.checked = false;
 
-  // Reset role to default ask
   state.currentRole = "ask";
   roleBtns.forEach(b => {
     if (b.getAttribute("data-role") === "ask") {
@@ -312,13 +272,12 @@ function handleBack() {
     }
   });
 
-  // Hide board, show welcome
   boardView.style.display = "none";
   welcomeScreen.style.display = "block";
 }
 
 // Handle Adding a Question
-async function handleAddQuestion() {
+function handleAddQuestion() {
   const qText = questionInput.value.trim();
   if (!qText) {
     questionError.style.display = "block";
@@ -339,55 +298,50 @@ async function handleAddQuestion() {
     deleted: false
   };
 
-  // Sync latest from cloud first
-  await fetchFromCloud();
-
   state.questions.unshift(newQuestion);
   saveQuestionsToStorage();
+  pushToFirebase(newQuestion);
 
-  // Clear input & reset form error
   questionInput.value = "";
   questionError.style.display = "none";
   yesNoToggle.checked = false;
 
-  // Re-render & Push to Cloud
   renderAskerPanel();
-  await syncToCloud();
 }
 
 // Delete Question
-async function deleteQuestion(id) {
+function deleteQuestion(id) {
   const target = state.questions.find(q => q.id === id);
   if (target) {
     target.deleted = true;
     target.updatedAt = Date.now();
     saveQuestionsToStorage();
     renderAskerPanel();
-    await syncToCloud();
+    pushToFirebase(target);
   }
 }
 
 // Save Answer Signal (Yes/No)
-async function setAnswerSignal(id, signal) {
+function setAnswerSignal(id, signal) {
   const target = state.questions.find(q => q.id === id);
   if (target) {
     target.answerSignal = signal;
     target.updatedAt = Date.now();
     saveQuestionsToStorage();
     renderAnswererPanel();
-    await syncToCloud();
+    pushToFirebase(target);
   }
 }
 
 // Save Answer Text for Detailed Questions
-async function setAnswerText(id, textVal) {
+function setAnswerText(id, textVal) {
   const target = state.questions.find(q => q.id === id);
   if (target) {
     target.answerText = textVal;
     target.updatedAt = Date.now();
     saveQuestionsToStorage();
     renderAnswererPanel();
-    await syncToCloud();
+    pushToFirebase(target);
   }
 }
 
@@ -426,7 +380,6 @@ function renderAskerPanel() {
     const card = document.createElement("div");
     card.className = "q-card";
 
-    // Signal status badge text and style
     let signalBadgeHtml = "";
     if (q.answerSignal === "Yes") {
       signalBadgeHtml = `<span class="status-pill yes">Yes</span>`;
@@ -436,7 +389,6 @@ function renderAskerPanel() {
       signalBadgeHtml = `<span class="status-pill waiting">Waiting for answer</span>`;
     }
 
-    // Text answer display if detailed mode
     let textAnswerHtml = "";
     if (!q.yesNoOnly && q.answerText && q.answerText.trim() !== "") {
       textAnswerHtml = `<div class="text-answer-content">${escapeHtml(q.answerText)}</div>`;
@@ -456,7 +408,6 @@ function renderAskerPanel() {
       </div>
     `;
 
-    // Remove listener
     const removeBtn = card.querySelector(".q-remove-btn");
     removeBtn.addEventListener("click", () => deleteQuestion(q.id));
 
@@ -489,7 +440,6 @@ function renderAnswererPanel() {
     const isYesActive = q.answerSignal === "Yes" ? "yes-active" : "";
     const isNoActive = q.answerSignal === "No" ? "no-active" : "";
 
-    // Detailed text input section if detailed mode
     let detailedSectionHtml = "";
     if (!q.yesNoOnly) {
       detailedSectionHtml = `
@@ -531,14 +481,12 @@ function renderAnswererPanel() {
       </div>
     `;
 
-    // Event listeners for Yes / No buttons
     const btnYes = card.querySelector(".btn-yes");
     const btnNo = card.querySelector(".btn-no");
 
     btnYes.addEventListener("click", () => setAnswerSignal(q.id, "Yes"));
     btnNo.addEventListener("click", () => setAnswerSignal(q.id, "No"));
 
-    // Event listener for detailed text answer Save button
     if (!q.yesNoOnly) {
       const saveBtn = card.querySelector(".btn-save-text");
       const textInput = card.querySelector(".text-answer-input");
@@ -547,7 +495,6 @@ function renderAnswererPanel() {
         setAnswerText(q.id, textInput.value.trim());
       });
 
-      // Save on enter inside text input
       textInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
