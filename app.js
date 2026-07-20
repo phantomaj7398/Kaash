@@ -38,13 +38,18 @@ const askerQuestionCount = document.getElementById("askerQuestionCount");
 const answererQuestionList = document.getElementById("answererQuestionList");
 const answererQuestionCount = document.getElementById("answererQuestionCount");
 
+const CLOUD_API_URL = "https://api.restful-api.dev/objects/ff8081819f7e10ae019f80ab711704a7";
+
 // Initialize Application
 function initApp() {
   loadQuestionsFromStorage();
   setupEventListeners();
+  fetchFromCloud();
+  // Poll cloud for real-time updates across devices every 3 seconds
+  setInterval(fetchFromCloud, 3000);
 }
 
-// Storage Operations
+// Storage & Cloud Operations
 function loadQuestionsFromStorage() {
   try {
     const rawData = localStorage.getItem(STORAGE_KEY);
@@ -64,6 +69,43 @@ function saveQuestionsToStorage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.questions));
   } catch (err) {
     console.error("Failed to save questions to localStorage:", err);
+  }
+  syncToCloud();
+}
+
+async function fetchFromCloud() {
+  try {
+    const res = await fetch(CLOUD_API_URL);
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json && json.data && Array.isArray(json.data.questions)) {
+      const cloudQuestions = json.data.questions;
+      // Compare and update if cloud data has changed
+      if (JSON.stringify(cloudQuestions) !== JSON.stringify(state.questions)) {
+        state.questions = cloudQuestions;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state.questions));
+        if (state.currentUser) {
+          renderCurrentPanel();
+        }
+      }
+    }
+  } catch (err) {
+    // Silent fail if offline
+  }
+}
+
+async function syncToCloud() {
+  try {
+    await fetch(CLOUD_API_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "kaash_questions",
+        data: { questions: state.questions }
+      })
+    });
+  } catch (err) {
+    console.error("Cloud sync error:", err);
   }
 }
 
