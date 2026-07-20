@@ -100,16 +100,26 @@ function setSyncState(isSyncing, label = "Firebase Live") {
 
 // Initialize Firebase Realtime Database
 function initFirebase() {
-  const customUrl = localStorage.getItem(FIREBASE_URL_KEY) || DEFAULT_FIREBASE_URL;
+  const customUrl = localStorage.getItem(FIREBASE_URL_KEY);
   if (firebaseUrlInput) {
-    firebaseUrlInput.value = customUrl;
+    firebaseUrlInput.value = customUrl || "";
+  }
+
+  // If no custom database URL is configured, run in Local Storage mode
+  if (!customUrl) {
+    setSyncState(false, "Local Mode");
+    return;
   }
 
   setSyncState(true);
 
+  // Safety connection timeout: if Firebase WebSocket does not respond in 4 seconds
+  const connectionTimeout = setTimeout(() => {
+    setSyncState(false, "Invalid DB URL");
+  }, 4000);
+
   try {
     if (typeof firebase !== "undefined" && firebase.initializeApp) {
-      // Re-initialize if already initialized
       if (!firebase.apps.length) {
         firebaseApp = firebase.initializeApp({ databaseURL: customUrl });
       } else {
@@ -119,9 +129,10 @@ function initFirebase() {
 
       // Listen for real-time WebSocket updates across all devices
       firebaseDb.ref("questions").on("value", (snapshot) => {
-        const val = snapshot.val();
+        clearTimeout(connectionTimeout);
         setSyncState(false, "Firebase Live");
 
+        const val = snapshot.val();
         if (val) {
           const cloudQuestions = Object.values(val);
           state.questions = cloudQuestions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -136,15 +147,18 @@ function initFirebase() {
           }
         }
       }, (error) => {
+        clearTimeout(connectionTimeout);
         console.warn("Firebase listener error:", error);
-        setSyncState(false, "Offline");
+        setSyncState(false, "Access Denied");
       });
     } else {
+      clearTimeout(connectionTimeout);
       setSyncState(false, "Local Mode");
     }
   } catch (err) {
+    clearTimeout(connectionTimeout);
     console.error("Firebase init failed:", err);
-    setSyncState(false, "Offline");
+    setSyncState(false, "Local Mode");
   }
 }
 
