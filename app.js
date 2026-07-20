@@ -86,14 +86,14 @@ function saveQuestionsToStorage() {
   }
 }
 
-function setSyncState(isSyncing, label = "Firebase Live") {
+function setSyncState(isSyncing) {
   if (syncDot && syncText) {
     if (isSyncing) {
       syncDot.classList.add("syncing");
-      syncText.textContent = "Connecting...";
+      syncText.textContent = "Syncing";
     } else {
       syncDot.classList.remove("syncing");
-      syncText.textContent = label;
+      syncText.textContent = "Synced";
     }
   }
 }
@@ -105,17 +105,15 @@ function initFirebase() {
     firebaseUrlInput.value = customUrl || "";
   }
 
-  // If no custom database URL is configured, run in Local Storage mode
   if (!customUrl) {
-    setSyncState(false, "Local Mode");
+    setSyncState(false);
     return;
   }
 
   setSyncState(true);
 
-  // Safety connection timeout: if Firebase WebSocket does not respond in 4 seconds
   const connectionTimeout = setTimeout(() => {
-    setSyncState(false, "Invalid DB URL");
+    setSyncState(false);
   }, 4000);
 
   try {
@@ -130,7 +128,7 @@ function initFirebase() {
       // Listen for real-time WebSocket updates across all devices
       firebaseDb.ref("questions").on("value", (snapshot) => {
         clearTimeout(connectionTimeout);
-        setSyncState(false, "Firebase Live");
+        setSyncState(false);
 
         const val = snapshot.val();
         if (val) {
@@ -149,16 +147,16 @@ function initFirebase() {
       }, (error) => {
         clearTimeout(connectionTimeout);
         console.warn("Firebase listener error:", error);
-        setSyncState(false, "Access Denied");
+        setSyncState(false);
       });
     } else {
       clearTimeout(connectionTimeout);
-      setSyncState(false, "Local Mode");
+      setSyncState(false);
     }
   } catch (err) {
     clearTimeout(connectionTimeout);
     console.error("Firebase init failed:", err);
-    setSyncState(false, "Local Mode");
+    setSyncState(false);
   }
 }
 
