@@ -1,9 +1,11 @@
 /**
  * Question Board App - Plain JS Single Page App
  * LocalStorage key: "kaash-question-board"
+ * Real-time Cross-Device Cloud Sync
  */
 
 const STORAGE_KEY = "kaash-question-board";
+const CLOUD_API_URL = "https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb";
 
 // Global App State
 let state = {
@@ -38,8 +40,6 @@ const askerQuestionCount = document.getElementById("askerQuestionCount");
 const answererQuestionList = document.getElementById("answererQuestionList");
 const answererQuestionCount = document.getElementById("answererQuestionCount");
 
-const CLOUD_API_URL = "https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb";
-
 // Initialize Application
 function initApp() {
   loadQuestionsFromStorage();
@@ -49,7 +49,7 @@ function initApp() {
   setInterval(fetchFromCloud, 2000);
 }
 
-// Storage & Cloud Operations
+// Storage Operations
 function loadQuestionsFromStorage() {
   try {
     const rawData = localStorage.getItem(STORAGE_KEY);
@@ -70,7 +70,45 @@ function saveQuestionsToStorage() {
   } catch (err) {
     console.error("Failed to save questions to localStorage:", err);
   }
-  syncToCloud();
+}
+
+// Deterministic Merging Algorithm (Cross-Device CRDT)
+function mergeQuestions(localList, cloudList) {
+  const map = new Map();
+
+  // Load local questions
+  (localList || []).forEach(q => {
+    if (q && q.id) {
+      map.set(q.id, q);
+    }
+  });
+
+  // Merge cloud questions
+  (cloudList || []).forEach(cq => {
+    if (!cq || !cq.id) return;
+    const lq = map.get(cq.id);
+    if (!lq) {
+      map.set(cq.id, cq);
+    } else {
+      const cloudTime = cq.updatedAt || cq.createdAt || 0;
+      const localTime = lq.updatedAt || lq.createdAt || 0;
+
+      if (cloudTime > localTime) {
+        map.set(cq.id, cq);
+      } else if (cloudTime === localTime) {
+        if (cq.deleted) {
+          map.set(cq.id, cq);
+        } else if (cq.answerSignal && !lq.answerSignal) {
+          map.set(cq.id, cq);
+        } else if (cq.answerText && !lq.answerText) {
+          map.set(cq.id, cq);
+        }
+      }
+    }
+  });
+
+  // Sort by createdAt descending
+  return Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 async function fetchFromCloud() {
@@ -82,13 +120,14 @@ async function fetchFromCloud() {
       headers: { "Pragma": "no-cache" }
     });
     if (!res.ok) return;
+
     const json = await res.json();
     if (json && Array.isArray(json.questions)) {
-      const cloudQuestions = json.questions;
-      // Compare and update if cloud data differs
-      if (JSON.stringify(cloudQuestions) !== JSON.stringify(state.questions)) {
-        state.questions = cloudQuestions;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state.questions));
+      const merged = mergeQuestions(state.questions, json.questions);
+      
+      if (JSON.stringify(merged) !== JSON.stringify(state.questions)) {
+        state.questions = merged;
+        saveQuestionsToStorage();
         if (state.currentUser) {
           renderCurrentPanel();
         }
@@ -215,7 +254,7 @@ function handleBack() {
 }
 
 // Handle Adding a Question
-function handleAddQuestion() {
+async function handleAddQuestion() {
   const qText = questionInput.value.trim();
   if (!qText) {
     questionError.style.display = "block";
@@ -223,15 +262,21 @@ function handleAddQuestion() {
     return;
   }
 
+  const now = Date.now();
   const newQuestion = {
-    id: "q_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
+    id: "q_" + now + "_" + Math.random().toString(36).substr(2, 5),
     text: qText,
     yesNoOnly: yesNoToggle.checked,
     author: state.currentUser,
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     answerSignal: null, // null | 'Yes' | 'No'
-    answerText: ""      // string
+    answerText: "",     // string
+    deleted: false
   };
+
+  // Sync latest from cloud first
+  await fetchFromCloud();
 
   state.questions.unshift(newQuestion);
   saveQuestionsToStorage();
@@ -241,35 +286,44 @@ function handleAddQuestion() {
   questionError.style.display = "none";
   yesNoToggle.checked = false;
 
-  // Re-render
+  // Re-render & Push to Cloud
   renderAskerPanel();
+  await syncToCloud();
 }
 
 // Delete Question
-function deleteQuestion(id) {
-  state.questions = state.questions.filter(q => q.id !== id);
-  saveQuestionsToStorage();
-  renderAskerPanel();
+async function deleteQuestion(id) {
+  const target = state.questions.find(q => q.id === id);
+  if (target) {
+    target.deleted = true;
+    target.updatedAt = Date.now();
+    saveQuestionsToStorage();
+    renderAskerPanel();
+    await syncToCloud();
+  }
 }
 
 // Save Answer Signal (Yes/No)
-function setAnswerSignal(id, signal) {
+async function setAnswerSignal(id, signal) {
   const target = state.questions.find(q => q.id === id);
   if (target) {
-    // If clicking same answer again, keep it set or update it
     target.answerSignal = signal;
+    target.updatedAt = Date.now();
     saveQuestionsToStorage();
     renderAnswererPanel();
+    await syncToCloud();
   }
 }
 
 // Save Answer Text for Detailed Questions
-function setAnswerText(id, textVal) {
+async function setAnswerText(id, textVal) {
   const target = state.questions.find(q => q.id === id);
   if (target) {
     target.answerText = textVal;
+    target.updatedAt = Date.now();
     saveQuestionsToStorage();
     renderAnswererPanel();
+    await syncToCloud();
   }
 }
 
@@ -288,10 +342,11 @@ function renderCurrentPanel() {
 
 // Render Asker Panel & Question Cards
 function renderAskerPanel() {
-  askerQuestionCount.textContent = state.questions.length;
+  const activeQuestions = state.questions.filter(q => !q.deleted);
+  askerQuestionCount.textContent = activeQuestions.length;
   askerQuestionList.innerHTML = "";
 
-  if (state.questions.length === 0) {
+  if (activeQuestions.length === 0) {
     askerQuestionList.innerHTML = `
       <div class="empty-state">
         <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -303,7 +358,7 @@ function renderAskerPanel() {
     return;
   }
 
-  state.questions.forEach(q => {
+  activeQuestions.forEach(q => {
     const card = document.createElement("div");
     card.className = "q-card";
 
@@ -347,10 +402,11 @@ function renderAskerPanel() {
 
 // Render Answerer Panel & Question Cards
 function renderAnswererPanel() {
-  answererQuestionCount.textContent = state.questions.length;
+  const activeQuestions = state.questions.filter(q => !q.deleted);
+  answererQuestionCount.textContent = activeQuestions.length;
   answererQuestionList.innerHTML = "";
 
-  if (state.questions.length === 0) {
+  if (activeQuestions.length === 0) {
     answererQuestionList.innerHTML = `
       <div class="empty-state">
         <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -362,7 +418,7 @@ function renderAnswererPanel() {
     return;
   }
 
-  state.questions.forEach(q => {
+  activeQuestions.forEach(q => {
     const card = document.createElement("div");
     card.className = "q-card";
 
