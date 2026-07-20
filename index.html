@@ -104,12 +104,11 @@
             <button id="closeModalBtn" class="close-btn">&times;</button>
           </div>
           <div class="modal-body">
-            <p class="modal-desc">This is the exact real-time JSON data stored on the cloud server:</p>
+            <p class="modal-desc">Real-time live JSON payload stored in the cloud database:</p>
             <div class="cloud-url-box">
-              <span class="url-label">Cloud Endpoint URL:</span>
-              <a href="https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb" target="_blank" class="url-link">
-                https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb
-              </a>
+              <span class="url-label">API Endpoint URL (JSON API):</span>
+              <code class="url-code">https://jsonblob.com/api/jsonBlob/019f80b5-b6f4-7aac-b3a0-fe8c50badcbb</code>
+              <p class="url-note">Note: Browsers opening API links directly send HTML headers (returning 404). This app fetches the live JSON directly below:</p>
             </div>
             <pre id="cloudJsonContent" class="json-viewer">Loading live cloud data...</pre>
           </div>
